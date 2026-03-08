@@ -5,7 +5,7 @@ import os
 import time
 import warnings
 import numpy as np
-import logging
+import logging #
 
 from flcore.servers.serverlocal import Local
 from flcore.servers.serverproto import FedProto
@@ -331,7 +331,7 @@ if __name__ == "__main__":
     parser.add_argument('-did', "--device_id", type=str, default="0")
     parser.add_argument('-data', "--dataset", type=str, default="MNIST")
     parser.add_argument('-ncl', "--num_classes", type=int, default=10)
-    parser.add_argument('-m', "--model_family", type=str, default="HtM10")
+    parser.add_argument('-m', "--model_family", type=str, default="HtM10") #决定“这一组联邦客户端各自用什么模型架构”；
     parser.add_argument('-lbs', "--batch_size", type=int, default=10)
     parser.add_argument('-lr', "--local_learning_rate", type=float, default=0.01,
                         help="Local learning rate")
@@ -386,9 +386,20 @@ if __name__ == "__main__":
     parser.add_argument('-al', "--alpha", type=float, default=1.0)
     parser.add_argument('-bt', "--beta", type=float, default=1.0)
     # FedKD
-    parser.add_argument('-mlr', "--mentee_learning_rate", type=float, default=0.01)
-    parser.add_argument('-Ts', "--T_start", type=float, default=0.95)
-    parser.add_argument('-Te', "--T_end", type=float, default=0.98)
+    parser.add_argument('-mlr', "--mentee_learning_rate", type=float, default=0.01)  # 全局/mentee模型在客户端的学习率
+    parser.add_argument('-Ts', "--T_start", type=float, default=0.95)  # SVD压缩的初始能量阈值
+    parser.add_argument('-Te', "--T_end", type=float, default=0.98)    # SVD压缩的最终能量阈值
+    parser.add_argument('--distill_ratio', type=float, default=1.0,    # 每个客户端本地用于KD/DKD蒸馏的样本比例
+                        help="Ratio of local samples used for KD/DKD distillation in FedKD")
+    parser.add_argument('--distill_type', type=str, default='KD',      # 蒸馏类型：KD或DKD
+                        choices=['KD', 'DKD'],
+                        help="Type of distillation used in FedKD: KD or DKD")
+    parser.add_argument('--dkd_alpha', type=float, default=1.0,        # DKD中target部分的权重
+                        help="Weight for target-class term in DKD loss")
+    parser.add_argument('--dkd_beta', type=float, default=1.0,         # DKD中non-target部分的权重
+                        help="Weight for non-target-class term in DKD loss")
+    parser.add_argument('--distill_T', type=float, default=1.0,        # KD/DKD中的温度系数
+                        help="Temperature for KD/DKD logits distillation in FedKD")
     # FedGH
     parser.add_argument('-slr', "--server_learning_rate", type=float, default=0.01)
     # FedTGP
