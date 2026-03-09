@@ -96,9 +96,8 @@ class clientKD(Client):
                     kl_s_t = (kl_s_t * mask).sum() / mask.sum()
                     kl_t_s = (kl_t_s * mask).sum() / mask.sum()
 
-                    # 特征MSE对齐，同样只在被选为蒸馏的样本上约束
-                    mse_feat = F.mse_loss(rep, W_h(rep_g), reduction="none").mean(dim=1)
-                    mse_feat = (mse_feat * mask).sum() / mask.sum()
+                    # 特征MSE对齐：在整个batch上计算，不受distill_ratio控制
+                    mse_feat = F.mse_loss(rep, W_h(rep_g))
 
                     # 显式写成 L_d + L_h 的形式，便于和原始FedKD对应
                     denom = (CE_loss + CE_loss_g)
@@ -155,9 +154,8 @@ class clientKD(Client):
                     dkd_non = (dkd_non * mask).sum() / mask.sum()
                     dkd_non_g = (dkd_non_g * mask).sum() / mask.sum()
 
-                    # 特征MSE对齐，同样只在被选为蒸馏的样本上约束
-                    mse_feat = F.mse_loss(rep, W_h(rep_g), reduction="none").mean(dim=1)
-                    mse_feat = (mse_feat * mask).sum() / mask.sum()
+                    # 特征MSE对齐：在整个batch上计算，不受distill_ratio控制
+                    mse_feat = F.mse_loss(rep, W_h(rep_g))
 
                     # DKD情况下，同样拆成 L_d（由target和non-target两部分组成）和 L_h
                     denom = (CE_loss + CE_loss_g)
@@ -253,8 +251,7 @@ class clientKD(Client):
                     kl_s_t = F.kl_div(log_p_s, p_t, reduction="none").sum(dim=1)
                     kl_s_t = (kl_s_t * mask).sum() / mask.sum()
 
-                    mse_feat = F.mse_loss(rep, W_h(rep_g), reduction="none").mean(dim=1)
-                    mse_feat = (mse_feat * mask).sum() / mask.sum()
+                    mse_feat = F.mse_loss(rep, W_h(rep_g))
 
                     denom = (CE_loss + CE_loss_g)
                     L_d = kl_s_t / denom
@@ -292,8 +289,7 @@ class clientKD(Client):
                     dkd_target = (dkd_target * mask).sum() / mask.sum()
                     dkd_non = (dkd_non * mask).sum() / mask.sum()
 
-                    mse_feat = F.mse_loss(rep, W_h(rep_g), reduction="none").mean(dim=1)
-                    mse_feat = (mse_feat * mask).sum() / mask.sum()
+                    mse_feat = F.mse_loss(rep, W_h(rep_g))
 
                     denom = (CE_loss + CE_loss_g)
                     L_d = (alpha * dkd_target + beta * dkd_non) / denom
