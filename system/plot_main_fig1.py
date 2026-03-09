@@ -103,10 +103,18 @@ def collect_acc_over_ratios():
             continue
 
         ratios.append(r)
+
         kd_mean.append(accs_kd.mean())
-        kd_std.append(accs_kd.std())
+        if accs_kd.size > 1:
+            kd_std.append(accs_kd.std())
+        else:
+            kd_std.append(0.0)
+
         dkd_mean.append(accs_dkd.mean())
-        dkd_std.append(accs_dkd.std())
+        if accs_dkd.size > 1:
+            dkd_std.append(accs_dkd.std())
+        else:
+            dkd_std.append(0.0)
 
     return (np.array(ratios),
             np.array(kd_mean), np.array(kd_std),
