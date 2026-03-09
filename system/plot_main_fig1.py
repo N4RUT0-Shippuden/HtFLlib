@@ -8,7 +8,7 @@ from typing import Dict, List
 # ===================== 配置区：按你的实验改 =====================
 
 # 数据集和算法名字，对应 ../results/{DATASET}_{ALGO}_{goal}_{i}.h5
-DATASET = "MNIST"   # 先在 MNIST 上画图，如需换数据集改这里
+DATASET = "Cifar100"   # 现在在 Cifar100 上画图
 ALGO = "FedKD"
 
 # 蒸馏样本比例列表（distill_ratio），按你实际跑的来填
@@ -16,13 +16,13 @@ DISTILL_RATIOS: List[float] = [0.10, 0.25, 0.50, 1.00]
 
 # 对每个比例，KD 和 DKD 对应的 goal（也就是你 main.py 里 -go 的取值）
 # 例如：
-#   KD:  python main.py ... -data MNIST -algo FedKD --distill_type KD  --distill_ratio 0.25 -go MNIST_KD_r0.25 -t 1
-#   DKD: python main.py ... -data MNIST -algo FedKD --distill_type DKD --distill_ratio 0.25 -go MNIST_DKD_r0.25 -t 1
+#   KD:  python main.py ... -data Cifar100 -algo FedKD --distill_type KD  --distill_ratio 0.25 -go Cifar100_KD_r0.25 -t 1
+#   DKD: python main.py ... -data Cifar100 -algo FedKD --distill_type DKD --distill_ratio 0.25 -go Cifar100_DKD_r0.25 -t 1
 GOALS: Dict[float, Dict[str, str]] = {
-    0.10: {"KD": "MNIST_KD_r0.10", "DKD": "MNIST_DKD_r0.10"},
-    0.25: {"KD": "MNIST_KD_r0.25", "DKD": "MNIST_DKD_r0.25"},
-    0.50: {"KD": "MNIST_KD_r0.50", "DKD": "MNIST_DKD_r0.50"},
-    1.00: {"KD": "MNIST_KD_r1.00", "DKD": "MNIST_DKD_r1.00"},
+    0.10: {"KD": "Cifar100_KD_r0.10", "DKD": "Cifar100_DKD_r0.10"},
+    0.25: {"KD": "Cifar100_KD_r0.25", "DKD": "Cifar100_DKD_r0.25"},
+    0.50: {"KD": "Cifar100_KD_r0.50", "DKD": "Cifar100_DKD_r0.50"},
+    1.00: {"KD": "Cifar100_KD_r1.00", "DKD": "Cifar100_DKD_r1.00"},
 }
 
 # 每个 (KD/DKD, goal) 跑了多少次，对应 main.py 的 -t
@@ -32,7 +32,7 @@ NUM_RUNS = 1
 USE_BEST_ACC = True  # True: max(rs_test_acc)，False: rs_test_acc[-1]
 
 RESULTS_DIR = Path("../results")
-OUT_FIG_PATH = Path("fig_main1_MNIST_acc_vs_ratio.png")
+OUT_FIG_PATH = Path("fig_main1_Cifar100_acc_vs_ratio.png")
 
 
 def set_paper_style():
