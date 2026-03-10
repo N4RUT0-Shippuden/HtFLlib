@@ -39,7 +39,10 @@ def main() -> None:
     plt.ylabel("Global test accuracy")
     plt.grid(True, linestyle="--", alpha=0.3)
     plt.tight_layout()
-    plt.show()
+
+    out_png = file_path.with_suffix(".curve.png")
+    plt.savefig(out_png)
+    print("saved curve to:", out_png)
 
 
 if __name__ == "__main__":
