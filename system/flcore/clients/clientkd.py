@@ -315,40 +315,76 @@ def recover(compressed_param):
 
     
 def decomposition(param_iter, energy):
+    """对全局模型参数做 SVD 压缩；若出现数值问题（NaN/Inf 或 SVD 不收敛），则退回使用原参数，避免训练直接崩溃。"""
     compressed_param = {}
     for name, param in param_iter:
         try:
+            # 原始行为：把张量搬到 CPU 并转成 numpy，便于后面用 np.linalg.svd 处理
             param_cpu = param.detach().cpu().numpy()
         except:
+            # 保险起见：如果 detach/cpu 失败，就直接使用原对象
             param_cpu = param
-        # refer to https://github.com/wuch15/FedKD/blob/main/run.py#L187
-        if param_cpu.shape[0]>1 and len(param_cpu.shape)>1 and 'embeddings' not in name:
-            u, sigma, v = np.linalg.svd(param_cpu, full_matrices=False)
-            # support high-dimensional CNN param
-            if len(u.shape)==4:
+
+        # 新行为：默认先使用“原参数”作为压缩结果（退回原参数的含义）
+        compressed_param_cpu = param_cpu
+
+        # 只对形状合适、且名字中不包含 'embeddings' 的参数做 SVD 压缩
+        if (
+            isinstance(param_cpu, np.ndarray)
+            and param_cpu.ndim > 1
+            and param_cpu.shape[0] > 1
+            and 'embeddings' not in name
+        ):
+            # 新增安全检查：如果该层参数中存在 NaN 或 Inf，直接跳过压缩，避免数值不稳定
+            if not np.all(np.isfinite(param_cpu)):
+                compressed_param[name] = compressed_param_cpu
+                continue
+
+            # 新增容错：SVD 可能抛出 "SVD did not converge"，此时退回原参数而不是让程序崩溃
+            try:
+                u, sigma, v = np.linalg.svd(param_cpu, full_matrices=False)
+            except np.linalg.LinAlgError:
+                compressed_param[name] = compressed_param_cpu
+                continue
+
+            # 原有行为：支持高维 CNN 参数，把维度重排为适合后续处理的形式
+            if len(u.shape) == 4:
                 u = np.transpose(u, (2, 3, 0, 1))
                 sigma = np.transpose(sigma, (2, 0, 1))
                 v = np.transpose(v, (2, 3, 0, 1))
-            threshold=0
-            if np.sum(np.square(sigma))==0:
-                compressed_param_cpu=param_cpu
-            else:
-                for singular_value_num in range(len(sigma)):
-                    if np.sum(np.square(sigma[:singular_value_num]))>energy*np.sum(np.square(sigma)):
-                        threshold=singular_value_num
-                        break
-                u=u[:, :threshold]
-                sigma=sigma[:threshold]
-                v=v[:threshold, :]
-                # support high-dimensional CNN param
-                if len(u.shape)==4:
-                    u = np.transpose(u, (2, 3, 0, 1))
-                    sigma = np.transpose(sigma, (1, 2, 0))
-                    v = np.transpose(v, (2, 3, 0, 1))
-                compressed_param_cpu=[u,sigma,v]
-        elif 'embeddings' not in name:
-            compressed_param_cpu=param_cpu
 
+            threshold = 0
+            # 新增变量：提前计算总能量，便于多次复用
+            total_energy = np.sum(np.square(sigma))
+            if total_energy == 0:
+                # 极端情况：所有奇异值能量为 0，压缩没有意义，退回原参数
+                compressed_param_cpu = param_cpu
+            else:
+                # 原有逻辑：找到能量累积超过 energy 比例的最小奇异值个数
+                for singular_value_num in range(len(sigma)):
+                    if np.sum(np.square(sigma[:singular_value_num])) > energy * total_energy:
+                        threshold = singular_value_num
+                        break
+
+                if threshold == 0:
+                    # 若 threshold 仍为 0，说明无法选出有效子空间，退回原参数
+                    compressed_param_cpu = param_cpu
+                else:
+                    # 截断奇异值分解结果，只保留前 threshold 个奇异值
+                    u = u[:, :threshold]
+                    sigma = sigma[:threshold]
+                    v = v[:threshold, :]
+
+                    # 原有行为：对高维 CNN 参数再做一次维度重排
+                    if len(u.shape) == 4:
+                        u = np.transpose(u, (2, 3, 0, 1))
+                        sigma = np.transpose(sigma, (1, 2, 0))
+                        v = np.transpose(v, (2, 3, 0, 1))
+
+                    # 新行为：真正成功压缩时，才把结果存成 [u, sigma, v]
+                    compressed_param_cpu = [u, sigma, v]
+
+        # 无论是否压缩成功，都把当前（可能是压缩后的，也可能是原始的）参数写入字典
         compressed_param[name] = compressed_param_cpu
-        
+
     return compressed_param
