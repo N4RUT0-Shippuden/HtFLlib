@@ -14,6 +14,8 @@ class clientFD(Client):
         torch.manual_seed(0)
 
         self.lamda = args.lamda
+        # 控制本地用于蒸馏的样本比例（与 FedKD 统一），在 train() 中通过 mask 使用
+        self.distill_ratio = getattr(args, "distill_ratio", 1.0)
         self.distill_type = getattr(args, "distill_type", "KD")
         self.distill_T = getattr(args, "distill_T", 1.0)
         self.dkd_alpha = getattr(args, "dkd_alpha", 1.0)
