@@ -110,59 +110,53 @@ class clientKD(Client):
                     distill_loss_g = L_d_g + L_h_g
 
                 elif self.distill_type == "DKD":
-                    # DKD：将logits分解为target和non-target两部分分别蒸馏
+                    # DKD：按照 DKD.py，将 logits 的目标类与非目标类解耦蒸馏
                     T = self.distill_T
                     alpha = self.dkd_alpha
                     beta = self.dkd_beta
 
-                    # 教师和学生的softmax概率
+                    num_classes = output.size(1)
+                    gt_mask = F.one_hot(y, num_classes=num_classes).bool()
+                    other_mask = ~gt_mask
+
+                    # 1) TCKD：将 K 维概率压缩为 [p_target, p_non_target]
                     p_s = F.softmax(output / T, dim=1)
                     p_t = F.softmax(output_g / T, dim=1)
 
-                    # one-hot标签，用于取出target类
-                    one_hot = F.one_hot(y, num_classes=output.size(1)).float()
+                    p_s_t = (p_s * gt_mask).sum(dim=1, keepdim=True)
+                    p_s_o = (p_s * other_mask).sum(dim=1, keepdim=True)
+                    ps_2 = torch.cat([p_s_t, p_s_o], dim=1)
 
-                    # target部分概率
-                    p_s_t = (p_s * one_hot).sum(dim=1, keepdim=True)
-                    p_t_t = (p_t * one_hot).sum(dim=1, keepdim=True)
+                    p_t_t = (p_t * gt_mask).sum(dim=1, keepdim=True)
+                    p_t_o = (p_t * other_mask).sum(dim=1, keepdim=True)
+                    pt_2 = torch.cat([p_t_t, p_t_o], dim=1)
 
-                    # non-target部分概率
-                    p_s_nt = p_s * (1.0 - one_hot)
-                    p_t_nt = p_t * (1.0 - one_hot)
+                    log_ps_2 = torch.log(ps_2 + 1e-8)
+                    tckd_per = F.kl_div(log_ps_2, pt_2, reduction="none").sum(dim=1) * (T * T)
 
-                    # 对non-target部分重新归一化
-                    p_s_nt_sum = p_s_nt.sum(dim=1, keepdim=True) + 1e-8
-                    p_t_nt_sum = p_t_nt.sum(dim=1, keepdim=True) + 1e-8
-                    p_s_nt_norm = p_s_nt / p_s_nt_sum
-                    p_t_nt_norm = p_t_nt / p_t_nt_sum
+                    # 2) NCKD：只在非目标类别之间做 KD
+                    logits_t_part2 = output_g / T - 1000.0 * gt_mask.float()
+                    logits_s_part2 = output / T - 1000.0 * gt_mask.float()
+                    pt_part2 = F.softmax(logits_t_part2, dim=1)
+                    log_ps_part2 = F.log_softmax(logits_s_part2, dim=1)
+                    nckd_per = F.kl_div(log_ps_part2, pt_part2, reduction="none").sum(dim=1) * (T * T)
 
-                    # target部分的DKD项（KL散度）
-                    log_p_s_t = torch.log(p_s_t + 1e-8)
-                    log_p_t_t = torch.log(p_t_t + 1e-8)
-                    dkd_target = F.kl_div(log_p_s_t, p_t_t, reduction="none").view(-1)
-                    dkd_target_g = F.kl_div(log_p_t_t, p_s_t, reduction="none").view(-1)
+                    # 样本级 mask 加权（支持 distill_ratio）
+                    weight = mask / mask.sum()
+                    tckd_loss = (tckd_per * weight).sum()
+                    nckd_loss = (nckd_per * weight).sum()
 
-                    # non-target部分的DKD项（KL散度）
-                    log_p_s_nt = torch.log(p_s_nt_norm + 1e-8)
-                    log_p_t_nt = torch.log(p_t_nt_norm + 1e-8)
-                    dkd_non = F.kl_div(log_p_s_nt, p_t_nt_norm, reduction="none").sum(dim=1)
-                    dkd_non_g = F.kl_div(log_p_t_nt, p_s_nt_norm, reduction="none").sum(dim=1)
+                    dkd_raw = alpha * tckd_loss + beta * nckd_loss
 
-                    # 应用样本级mask
-                    dkd_target = (dkd_target * mask).sum() / mask.sum()
-                    dkd_target_g = (dkd_target_g * mask).sum() / mask.sum()
-                    dkd_non = (dkd_non * mask).sum() / mask.sum()
-                    dkd_non_g = (dkd_non_g * mask).sum() / mask.sum()
-
-                    # 特征MSE对齐：在整个batch上计算，不受distill_ratio控制
+                    # 特征 MSE 对齐：在整个 batch 上计算
                     mse_feat = F.mse_loss(rep, W_h(rep_g))
 
-                    # DKD情况下，同样拆成 L_d（由target和non-target两部分组成）和 L_h
+                    # FedKD 风格的缩放
                     denom = (CE_loss + CE_loss_g)
-                    L_d = (alpha * dkd_target + beta * dkd_non) / denom
-                    L_d_g = (alpha * dkd_target_g + beta * dkd_non_g) / denom
+                    L_d = dkd_raw / denom
+                    L_d_g = L_d
                     L_h = mse_feat / denom
-                    L_h_g = mse_feat / denom
+                    L_h_g = L_h
 
                     distill_loss = L_d + L_h
                     distill_loss_g = L_d_g + L_h_g
@@ -264,35 +258,40 @@ class clientKD(Client):
                     alpha = self.dkd_alpha
                     beta = self.dkd_beta
 
+                    num_classes = output.size(1)
+                    gt_mask = F.one_hot(y, num_classes=num_classes).bool()
+                    other_mask = ~gt_mask
+
                     p_s = F.softmax(output / T, dim=1)
                     p_t = F.softmax(output_g / T, dim=1)
-                    one_hot = F.one_hot(y, num_classes=output.size(1)).float()
 
-                    p_s_t = (p_s * one_hot).sum(dim=1, keepdim=True)
-                    p_t_t = (p_t * one_hot).sum(dim=1, keepdim=True)
+                    p_s_t = (p_s * gt_mask).sum(dim=1, keepdim=True)
+                    p_s_o = (p_s * other_mask).sum(dim=1, keepdim=True)
+                    ps_2 = torch.cat([p_s_t, p_s_o], dim=1)
 
-                    p_s_nt = p_s * (1.0 - one_hot)
-                    p_t_nt = p_t * (1.0 - one_hot)
+                    p_t_t = (p_t * gt_mask).sum(dim=1, keepdim=True)
+                    p_t_o = (p_t * other_mask).sum(dim=1, keepdim=True)
+                    pt_2 = torch.cat([p_t_t, p_t_o], dim=1)
 
-                    p_s_nt_sum = p_s_nt.sum(dim=1, keepdim=True) + 1e-8
-                    p_t_nt_sum = p_t_nt.sum(dim=1, keepdim=True) + 1e-8
-                    p_s_nt_norm = p_s_nt / p_s_nt_sum
-                    p_t_nt_norm = p_t_nt / p_t_nt_sum
+                    log_ps_2 = torch.log(ps_2 + 1e-8)
+                    tckd_per = F.kl_div(log_ps_2, pt_2, reduction="none").sum(dim=1) * (T * T)
 
-                    log_p_s_t = torch.log(p_s_t + 1e-8)
-                    log_p_t_t = torch.log(p_t_t + 1e-8)
-                    dkd_target = F.kl_div(log_p_s_t, p_t_t, reduction="none").view(-1)
+                    logits_t_part2 = output_g / T - 1000.0 * gt_mask.float()
+                    logits_s_part2 = output / T - 1000.0 * gt_mask.float()
+                    pt_part2 = F.softmax(logits_t_part2, dim=1)
+                    log_ps_part2 = F.log_softmax(logits_s_part2, dim=1)
+                    nckd_per = F.kl_div(log_ps_part2, pt_part2, reduction="none").sum(dim=1) * (T * T)
 
-                    log_p_s_nt = torch.log(p_s_nt_norm + 1e-8)
-                    dkd_non = F.kl_div(log_p_s_nt, p_t_nt_norm, reduction="none").sum(dim=1)
+                    weight = mask / mask.sum()
+                    tckd_loss = (tckd_per * weight).sum()
+                    nckd_loss = (nckd_per * weight).sum()
 
-                    dkd_target = (dkd_target * mask).sum() / mask.sum()
-                    dkd_non = (dkd_non * mask).sum() / mask.sum()
+                    dkd_raw = alpha * tckd_loss + beta * nckd_loss
 
                     mse_feat = F.mse_loss(rep, W_h(rep_g))
 
                     denom = (CE_loss + CE_loss_g)
-                    L_d = (alpha * dkd_target + beta * dkd_non) / denom
+                    L_d = dkd_raw / denom
                     L_h = mse_feat / denom
 
                     distill_loss = L_d + L_h
