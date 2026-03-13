@@ -110,7 +110,7 @@ class clientKD(Client):
                     distill_loss_g = L_d_g + L_h_g
 
                 elif self.distill_type == "DKD":
-                    # DKD：按照 DKD.py，将 logits 的目标类与非目标类解耦蒸馏
+                    # DKD：按照 DKD.py，将 logits 的目标类与非目标类解耦蒸馏，并进行互蒸馏
                     T = self.distill_T
                     alpha = self.dkd_alpha
                     beta = self.dkd_beta
@@ -119,7 +119,7 @@ class clientKD(Client):
                     gt_mask = F.one_hot(y, num_classes=num_classes).bool()
                     other_mask = ~gt_mask
 
-                    # 1) TCKD：将 K 维概率压缩为 [p_target, p_non_target]
+                    # student -> teacher DKD
                     p_s = F.softmax(output / T, dim=1)
                     p_t = F.softmax(output_g / T, dim=1)
 
@@ -132,31 +132,54 @@ class clientKD(Client):
                     pt_2 = torch.cat([p_t_t, p_t_o], dim=1)
 
                     log_ps_2 = torch.log(ps_2 + 1e-8)
-                    tckd_per = F.kl_div(log_ps_2, pt_2, reduction="none").sum(dim=1) * (T * T)
+                    tckd_per_s = F.kl_div(log_ps_2, pt_2, reduction="none").sum(dim=1) * (T * T)
 
-                    # 2) NCKD：只在非目标类别之间做 KD
                     logits_t_part2 = output_g / T - 1000.0 * gt_mask.float()
                     logits_s_part2 = output / T - 1000.0 * gt_mask.float()
                     pt_part2 = F.softmax(logits_t_part2, dim=1)
                     log_ps_part2 = F.log_softmax(logits_s_part2, dim=1)
-                    nckd_per = F.kl_div(log_ps_part2, pt_part2, reduction="none").sum(dim=1) * (T * T)
+                    nckd_per_s = F.kl_div(log_ps_part2, pt_part2, reduction="none").sum(dim=1) * (T * T)
 
                     # 样本级 mask 加权（支持 distill_ratio）
                     weight = mask / mask.sum()
-                    tckd_loss = (tckd_per * weight).sum()
-                    nckd_loss = (nckd_per * weight).sum()
+                    tckd_loss_s = (tckd_per_s * weight).sum()
+                    nckd_loss_s = (nckd_per_s * weight).sum()
+                    dkd_raw_s = alpha * tckd_loss_s + beta * nckd_loss_s
 
-                    dkd_raw = alpha * tckd_loss + beta * nckd_loss
+                    # teacher -> student DKD（互蒸馏）
+                    p_s_rev = F.softmax(output_g / T, dim=1)
+                    p_t_rev = F.softmax(output / T, dim=1)
+
+                    p_s_t_rev = (p_s_rev * gt_mask).sum(dim=1, keepdim=True)
+                    p_s_o_rev = (p_s_rev * other_mask).sum(dim=1, keepdim=True)
+                    ps_2_rev = torch.cat([p_s_t_rev, p_s_o_rev], dim=1)
+
+                    p_t_t_rev = (p_t_rev * gt_mask).sum(dim=1, keepdim=True)
+                    p_t_o_rev = (p_t_rev * other_mask).sum(dim=1, keepdim=True)
+                    pt_2_rev = torch.cat([p_t_t_rev, p_t_o_rev], dim=1)
+
+                    log_ps_2_rev = torch.log(ps_2_rev + 1e-8)
+                    tckd_per_g = F.kl_div(log_ps_2_rev, pt_2_rev, reduction="none").sum(dim=1) * (T * T)
+
+                    logits_t_part2_rev = output / T - 1000.0 * gt_mask.float()
+                    logits_s_part2_rev = output_g / T - 1000.0 * gt_mask.float()
+                    pt_part2_rev = F.softmax(logits_t_part2_rev, dim=1)
+                    log_ps_part2_rev = F.log_softmax(logits_s_part2_rev, dim=1)
+                    nckd_per_g = F.kl_div(log_ps_part2_rev, pt_part2_rev, reduction="none").sum(dim=1) * (T * T)
+
+                    tckd_loss_g = (tckd_per_g * weight).sum()
+                    nckd_loss_g = (nckd_per_g * weight).sum()
+                    dkd_raw_g = alpha * tckd_loss_g + beta * nckd_loss_g
 
                     # 特征 MSE 对齐：在整个 batch 上计算
                     mse_feat = F.mse_loss(rep, W_h(rep_g))
 
                     # FedKD 风格的缩放
                     denom = (CE_loss + CE_loss_g)
-                    L_d = dkd_raw / denom
-                    L_d_g = L_d
+                    L_d = dkd_raw_s / denom
+                    L_d_g = dkd_raw_g / denom
                     L_h = mse_feat / denom
-                    L_h_g = L_h
+                    L_h_g = mse_feat / denom
 
                     distill_loss = L_d + L_h
                     distill_loss_g = L_d_g + L_h_g
