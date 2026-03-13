@@ -208,20 +208,16 @@ class clientKD(Client):
         save_item(model, self.role, 'model', self.save_folder_name)
         save_item(global_model, self.role, 'global_model', self.save_folder_name)
         save_item(W_h, self.role, 'W_h', self.save_folder_name)
-        compressed_param = decomposition(global_model.named_parameters(), self.energy)
-        save_item(compressed_param, self.role, 'compressed_param', self.save_folder_name)
 
         self.train_time_cost['num_rounds'] += 1
         self.train_time_cost['total_cost'] += time.time() - start_time
 
         
     def set_parameters(self):
-        global_model = load_item(self.role, 'global_model', self.save_folder_name)
-        compressed_param = load_item('Server', 'compressed_param', self.save_folder_name)
-        param = recover(compressed_param)
-        for name, old_param in global_model.named_parameters():
-            if name in param:
-                old_param.data = torch.tensor(param[name], device=self.device).data.clone()
+        """同步服务器端的全局模型到当前客户端，不使用压缩参数。"""
+        # 从 Server 角色加载最新的全局模型权重
+        global_model = load_item('Server', 'global_model', self.save_folder_name)
+        # 直接将其保存到当前客户端的命名空间下
         save_item(global_model, self.role, 'global_model', self.save_folder_name)
 
     def train_metrics(self):

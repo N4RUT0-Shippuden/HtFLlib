@@ -78,20 +78,22 @@ class FedKD(Server):
 
         
     def aggregate_parameters(self):
-        assert (len(self.uploaded_ids) > 0)
-
+        """聚合客户端上传的全局模型参数，不做 SVD 压缩，直接采用参数平均。"""
+        # 初始化全局参数为 0
         global_model = load_item(self.role, 'global_model', self.save_folder_name)
-        global_param = {name: param.detach().cpu().numpy() 
+        global_param = {name: torch.zeros_like(param, device='cpu')
                         for name, param in global_model.named_parameters()}
-        for k in global_param.keys():
-            global_param[k] = np.zeros_like(global_param[k])
-            
+
+        # 直接从每个客户端加载其保存的 global_model，并做 FedAvg 聚合
         for cid in self.uploaded_ids:
             client = self.clients[cid]
-            compressed_param = load_item(client.role, 'compressed_param', client.save_folder_name)
-            client_param = recover(compressed_param)
-            for server_k, client_k in zip(global_param.keys(), client_param.keys()):
-                global_param[server_k] += client_param[client_k] * 1/len(self.uploaded_ids)
+            client_global = load_item(client.role, 'global_model', client.save_folder_name)
+            for (name, g_param), (_, c_param) in zip(global_param.items(), client_global.named_parameters()):
+                global_param[name] += c_param.detach().cpu() / len(self.uploaded_ids)
 
-        compressed_param = decomposition(global_param.items(), self.energy)
-        save_item(compressed_param, self.role, 'compressed_param', self.save_folder_name)
+        # 将聚合后的参数写回服务器端的 global_model
+        for name, param in global_model.named_parameters():
+            if name in global_param:
+                param.data = global_param[name].to(param.device)
+
+        save_item(global_model, self.role, 'global_model', self.save_folder_name)
