@@ -69,10 +69,12 @@ def load_acc_for_config(goal: str) -> np.ndarray:
             continue
         with h5py.File(file_path, "r") as hf:
             rs_test_acc = np.array(hf["rs_test_acc"])
-        if USE_BEST_ACC:
-            acc_val = float(rs_test_acc.max())
+        # 使用最后若干轮（最多 10 轮）的平均测试准确率，稳定对比收敛性能
+        if rs_test_acc.shape[0] >= 10:
+            tail = rs_test_acc[-10:]
         else:
-            acc_val = float(rs_test_acc[-1])
+            tail = rs_test_acc
+        acc_val = float(tail.mean())
         accs.append(acc_val)
 
     if len(accs) == 0:
