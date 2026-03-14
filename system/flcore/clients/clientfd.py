@@ -28,7 +28,7 @@ class clientFD(Client):
         optimizer = torch.optim.SGD(model.parameters(), lr=self.learning_rate)
         global_logits = load_item('Server', 'global_logits', self.save_folder_name)
         
-        start_time = time.time()
+        start_time = time.time() # 记录本地训练开始时间
 
         # model.to(self.device)
         model.train()
@@ -54,10 +54,17 @@ class clientFD(Client):
                 if self.distill_ratio >= 1.0:
                     mask = torch.ones_like(y, dtype=torch.float32, device=self.device)
                 else:
-                    mask = (torch.rand_like(y, dtype=torch.float32, device=self.device) < self.distill_ratio).float()
-                if mask.sum() < 1:
-                    rand_idx = torch.randint(0, y.shape[0], (1,), device=self.device)
-                    mask[rand_idx] = 1.0
+                    batch_size = y.shape[0]
+                    k = int(self.distill_ratio * batch_size)
+                    if k < 1:
+                        k = 1
+                    if k >= batch_size:
+                        mask = torch.ones_like(y, dtype=torch.float32, device=self.device)
+                    else:
+                        perm = torch.randperm(batch_size, device=self.device)
+                        selected = perm[:k]
+                        mask = torch.zeros_like(y, dtype=torch.float32, device=self.device)
+                        mask[selected] = 1.0
 
                 if global_logits is not None:
                     teacher_logits = copy.deepcopy(output.detach())
