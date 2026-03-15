@@ -51,7 +51,6 @@ class clientFD(Client):
                 if self.train_slow:
                     time.sleep(0.1 * np.abs(np.random.rand()))
                 output = model(x)
-                ce_loss = self.loss(output, y)
                 kd_loss = torch.tensor(0.0, device=self.device)
 
                 if self.distill_ratio >= 1.0:
@@ -61,6 +60,9 @@ class clientFD(Client):
                 if mask.sum() < 1:
                     rand_idx = torch.randint(0, y.shape[0], (1,), device=self.device)
                     mask[rand_idx] = 1.0
+
+                ce_per = F.cross_entropy(output, y, reduction="none")
+                ce_loss = (ce_per * mask).sum() / mask.sum()
 
                 if global_logits is not None:
                     teacher_logits = copy.deepcopy(output.detach())
