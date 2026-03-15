@@ -396,10 +396,18 @@ if __name__ == "__main__":
                         help="Type of distillation used in FedKD: KD or DKD")
     parser.add_argument('--dkd_alpha', type=float, default=1.0,        # DKD中target部分的权重
                         help="Weight for target-class term in DKD loss")
-    parser.add_argument('--dkd_beta', type=float, default=1.0,         # DKD中non-target部分的权重
+    parser.add_argument('--dkd_beta', type=float, default=8.0,         # DKD中non-target部分的权重
                         help="Weight for non-target-class term in DKD loss")
-    parser.add_argument('--distill_T', type=float, default=1.0,        # KD/DKD中的温度系数
+    parser.add_argument('--distill_T', type=float, default=4.0,
                         help="Temperature for KD/DKD logits distillation in FedKD")
+    parser.add_argument('--kd_ce_loss', type=float, default=0.1,
+                        help="Weight for CE loss term in KD distillation")
+    parser.add_argument('--kd_loss', type=float, default=0.9,
+                        help="Weight for soft-target KD loss term in KD distillation")
+    parser.add_argument('--dkd_ce_loss', type=float, default=1.0,
+                        help="Weight for CE loss term in DKD distillation")
+    parser.add_argument('--dkd_warmup', type=int, default=20,
+                        help="Number of local epochs for DKD warmup")
     # FedGH
     parser.add_argument('-slr', "--server_learning_rate", type=float, default=0.01)
     # FedTGP

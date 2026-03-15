@@ -14,10 +14,14 @@ class clientFD(Client):
         torch.manual_seed(0)
 
         self.lamda = args.lamda
+        self.kd_ce_weight = getattr(args, "kd_ce_loss", 0.1)
+        self.kd_loss_weight = getattr(args, "kd_loss", 0.9)
+        self.dkd_ce_weight = getattr(args, "dkd_ce_loss", 1.0)
+        self.dkd_warmup = getattr(args, "dkd_warmup", 20)
         self.distill_type = getattr(args, "distill_type", "KD")
-        self.distill_T = getattr(args, "distill_T", 1.0)
+        self.distill_T = getattr(args, "distill_T", 4.0)
         self.dkd_alpha = getattr(args, "dkd_alpha", 1.0)
-        self.dkd_beta = getattr(args, "dkd_beta", 1.0)
+        self.dkd_beta = getattr(args, "dkd_beta", 8.0)
 
 
     def train(self):
@@ -101,9 +105,17 @@ class clientFD(Client):
                         weight = mask / mask.sum()
                         tckd_loss = (tckd_per * weight).sum()
                         nckd_loss = (nckd_per * weight).sum()
-                        kd_loss = alpha * tckd_loss + beta * nckd_loss
+                        warmup_factor = 1.0
+                        if self.dkd_warmup > 0:
+                            warmup_factor = min(float(step + 1) / float(self.dkd_warmup), 1.0)
+                        kd_loss = (alpha * tckd_loss + beta * nckd_loss) * warmup_factor
 
-                loss = ce_loss + self.lamda * kd_loss
+                if self.distill_type == "KD":
+                    loss = self.kd_ce_weight * ce_loss + self.kd_loss_weight * kd_loss
+                elif self.distill_type == "DKD":
+                    loss = self.dkd_ce_weight * ce_loss + self.lamda * kd_loss
+                else:
+                    loss = ce_loss + kd_loss
 
                 for i, yy in enumerate(y):
                     y_c = yy.item()
@@ -184,7 +196,12 @@ class clientFD(Client):
                         nckd_loss = nckd_per.mean()
                         kd_loss = alpha * tckd_loss + beta * nckd_loss
 
-                loss = ce_loss + self.lamda * kd_loss
+                if self.distill_type == "KD":
+                    loss = self.kd_ce_weight * ce_loss + self.kd_loss_weight * kd_loss
+                elif self.distill_type == "DKD":
+                    loss = self.dkd_ce_weight * ce_loss + self.lamda * kd_loss
+                else:
+                    loss = ce_loss + kd_loss
 
                 train_num += y.shape[0]
                 losses += loss.item() * y.shape[0]
