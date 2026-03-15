@@ -14,6 +14,7 @@ class clientFD(Client):
         torch.manual_seed(0)
 
         self.lamda = args.lamda
+        self.distill_ratio = getattr(args, "distill_ratio", 1.0)
         self.kd_ce_weight = getattr(args, "kd_ce_loss", 0.1)
         self.kd_loss_weight = getattr(args, "kd_loss", 0.9)
         self.dkd_ce_weight = getattr(args, "dkd_ce_loss", 1.0)
