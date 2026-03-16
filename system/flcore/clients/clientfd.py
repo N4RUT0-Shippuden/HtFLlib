@@ -15,8 +15,8 @@ class clientFD(Client):
 
         self.lamda = args.lamda
         self.distill_ratio = getattr(args, "distill_ratio", 1.0)
-        self.kd_ce_weight = getattr(args, "kd_ce_loss", 0.1)
-        self.kd_loss_weight = getattr(args, "kd_loss", 0.9)
+        self.kd_ce_weight = getattr(args, "kd_ce_loss", 1.0)
+        self.kd_loss_weight = getattr(args, "kd_loss", 1.0)
         self.dkd_ce_weight = getattr(args, "dkd_ce_loss", 1.0)
         self.dkd_warmup = getattr(args, "dkd_warmup", 20)
         self.distill_type = getattr(args, "distill_type", "KD")

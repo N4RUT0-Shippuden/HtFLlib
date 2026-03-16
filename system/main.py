@@ -400,9 +400,9 @@ if __name__ == "__main__":
                         help="Weight for non-target-class term in DKD loss")
     parser.add_argument('--distill_T', type=float, default=4.0,
                         help="Temperature for KD/DKD logits distillation in FedKD")
-    parser.add_argument('--kd_ce_loss', type=float, default=0.1,
+    parser.add_argument('--kd_ce_loss', type=float, default=1.0,
                         help="Weight for CE loss term in KD distillation")
-    parser.add_argument('--kd_loss', type=float, default=0.9,
+    parser.add_argument('--kd_loss', type=float, default=1.0,
                         help="Weight for soft-target KD loss term in KD distillation")
     parser.add_argument('--dkd_ce_loss', type=float, default=1.0,
                         help="Weight for CE loss term in DKD distillation")
