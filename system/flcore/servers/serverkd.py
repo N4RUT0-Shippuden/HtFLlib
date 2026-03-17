@@ -45,6 +45,7 @@ class FedKD(Server):
                 self.evaluate()
 
             for client in self.selected_clients:
+                client.global_round_idx = i
                 client.train()
 
             # threads = [Thread(target=client.train)

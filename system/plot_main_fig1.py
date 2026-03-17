@@ -8,8 +8,8 @@ from typing import Dict, List
 # ===================== 配置区：按你的实验改 =====================
 
 # 数据集和算法名字，对应 ../results/{DATASET}_{ALGO}_{goal}_{i}.h5
-DATASET = "cifar10"   # 现在在 cifar10 上画图
-ALGO = "FedKD"
+DATASET = "Cifar100"
+ALGO = "FD"
 
 # 蒸馏样本比例列表（distill_ratio），按你实际跑的来填
 DISTILL_RATIOS: List[float] = [0.10, 0.25, 0.50, 1.00]
@@ -19,10 +19,10 @@ DISTILL_RATIOS: List[float] = [0.10, 0.25, 0.50, 1.00]
 #   KD:  python main.py ... -data cifar10 -algo FedKD --distill_type KD  --distill_ratio 0.25 -go cifar10_KD_r0.25 -t 1
 #   DKD: python main.py ... -data cifar10 -algo FedKD --distill_type DKD --distill_ratio 0.25 -go cifar10_DKD_r0.25 -t 1
 GOALS: Dict[float, Dict[str, str]] = {
-    0.10: {"KD": "cifar10_KD_r0.10", "DKD": "cifar10_DKD_r0.10"},
-    0.25: {"KD": "cifar10_KD_r0.25", "DKD": "cifar10_DKD_r0.25"},
-    0.50: {"KD": "cifar10_KD_r0.50", "DKD": "cifar10_DKD_r0.50"},
-    1.00: {"KD": "cifar10_KD_r1.00", "DKD": "cifar10_DKD_r1.00"},
+    0.10: {"KD": "Cifar100_FD_KD_r0.1",  "DKD": "Cifar100_FD_DKD_r0.1"},
+    0.25: {"KD": "Cifar100_FD_KD_r0.25", "DKD": "Cifar100_FD_DKD_r0.25"},
+    0.50: {"KD": "Cifar100_FD_KD_r0.5",  "DKD": "Cifar100_FD_DKD_r0.5"},
+    1.00: {"KD": "Cifar100_FD_KD_r1",    "DKD": "Cifar100_FD_DKD_r1"},
 }
 
 # 每个 (KD/DKD, goal) 跑了多少次，对应 main.py 的 -t
@@ -32,7 +32,7 @@ NUM_RUNS = 1
 USE_BEST_ACC = True  # True: max(rs_test_acc)，False: rs_test_acc[-1]
 
 RESULTS_DIR = Path("../results")
-OUT_FIG_PATH = Path("fig_main1_cifar10_acc_vs_ratio.png")
+OUT_FIG_PATH = Path("fig_FD_cifar100_acc_vs_ratio.png")
 
 
 def set_paper_style():
@@ -142,6 +142,11 @@ def plot_main_fig1():
         fmt="--s", capsize=3, label="DKD",
         color="#d62728"
     )
+
+    for x, y in zip(ratios, kd_mean):
+        ax.text(x, y, f"{y:.4f}", ha="center", va="bottom", fontsize=7, color="#1f77b4")
+    for x, y in zip(ratios, dkd_mean):
+        ax.text(x, y, f"{y:.4f}", ha="center", va="top", fontsize=7, color="#d62728")
 
     ax.set_xlabel("Distillation sample ratio $\\rho$")
     ax.set_ylabel("Global test accuracy")

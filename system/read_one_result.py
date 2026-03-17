@@ -4,7 +4,7 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 
 
-FILE_NAME = "cifar10_FedKD_cifar10_KD_r0.10_0.h5"
+FILE_NAME = "Cifar100_FD_Cifar100_FD_DKD_r1_0.h5"
 
 
 def main() -> None:
@@ -35,6 +35,7 @@ def main() -> None:
     rounds = np.arange(1, len(rs_test_acc) + 1)
     plt.figure(figsize=(5, 3))
     plt.plot(rounds, rs_test_acc, "-o", markersize=2)
+    plt.title(file_path.stem)
     plt.xlabel("Global round")
     plt.ylabel("Global test accuracy")
     plt.grid(True, linestyle="--", alpha=0.3)

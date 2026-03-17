@@ -32,6 +32,17 @@ class clientKD(Client):
 
     def train(self):
         trainloader = self.load_train_data()
+        if self.distill_ratio < 1.0:
+            dataset = trainloader.dataset
+            total_num = len(dataset)
+            selected_num = max(1, int(self.distill_ratio * total_num))
+            selected_idx = torch.randperm(total_num)[:selected_num].tolist()
+            trainloader = torch.utils.data.DataLoader(
+                torch.utils.data.Subset(dataset, selected_idx),
+                batch_size=trainloader.batch_size,
+                drop_last=trainloader.drop_last,
+                shuffle=False,
+            )
         model = load_item(self.role, 'model', self.save_folder_name)
         global_model = load_item(self.role, 'global_model', self.save_folder_name)
         W_h = load_item(self.role, 'W_h', self.save_folder_name)
@@ -47,6 +58,53 @@ class clientKD(Client):
         max_local_epochs = self.local_epochs
         if self.train_slow:
             max_local_epochs = np.random.randint(1, max_local_epochs // 2)
+
+        global_round_idx = getattr(self, "global_round_idx", 0)
+        if global_round_idx == 0:
+            for _ in range(50):
+                for i, (x, y) in enumerate(trainloader):
+                    if type(x) == type([]):
+                        x[0] = x[0].to(self.device)
+                    else:
+                        x = x.to(self.device)
+                    y = y.to(self.device)
+                    if self.train_slow:
+                        time.sleep(0.1 * np.abs(np.random.rand()))
+                    rep_g = global_model.base(x)
+                    output_g = global_model.head(rep_g)
+                    CE_loss_g = self.loss(output_g, y)
+                    optimizer.zero_grad()
+                    optimizer_g.zero_grad()
+                    optimizer_W.zero_grad()
+                    CE_loss_g.backward()
+                    torch.nn.utils.clip_grad_norm_(global_model.parameters(), 10)
+                    optimizer_g.step()
+
+            for _ in range(50):
+                for i, (x, y) in enumerate(trainloader):
+                    if type(x) == type([]):
+                        x[0] = x[0].to(self.device)
+                    else:
+                        x = x.to(self.device)
+                    y = y.to(self.device)
+                    if self.train_slow:
+                        time.sleep(0.1 * np.abs(np.random.rand()))
+                    rep = model.base(x)
+                    output = model.head(rep)
+                    CE_loss = self.loss(output, y)
+                    optimizer.zero_grad()
+                    optimizer_g.zero_grad()
+                    optimizer_W.zero_grad()
+                    CE_loss.backward()
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), 10)
+                    optimizer.step()
+
+            save_item(model, self.role, 'model', self.save_folder_name)
+            save_item(global_model, self.role, 'global_model', self.save_folder_name)
+            save_item(W_h, self.role, 'W_h', self.save_folder_name)
+            self.train_time_cost['num_rounds'] += 1
+            self.train_time_cost['total_cost'] += time.time() - start_time
+            return
 
         for step in range(max_local_epochs):
             for i, (x, y) in enumerate(trainloader):
@@ -65,17 +123,6 @@ class clientKD(Client):
                 CE_loss = self.loss(output, y)       # 学生的监督损失
                 CE_loss_g = self.loss(output_g, y)   # 教师的监督损失
 
-                # 构造蒸馏样本mask：为1的位置参与KD/DKD，为0的位置只做CE
-                if self.distill_ratio >= 1.0:
-                    mask = torch.ones_like(y, dtype=torch.float32, device=self.device)
-                else:
-                    mask = (torch.rand_like(y, dtype=torch.float32, device=self.device) < self.distill_ratio).float()
-
-                # 避免极端情况下没有任何样本被选中，保证至少有一个样本参与蒸馏
-                if mask.sum() < 1:
-                    rand_idx = torch.randint(0, y.shape[0], (1,), device=self.device)
-                    mask[rand_idx] = 1.0
-
                 # 蒸馏损失初始化
                 distill_loss = torch.tensor(0.0, device=self.device)
                 distill_loss_g = torch.tensor(0.0, device=self.device)
@@ -89,12 +136,8 @@ class clientKD(Client):
                     log_p_t = F.log_softmax(output_g / T, dim=1)
                     p_s = F.softmax(output / T, dim=1)
 
-                    # 按样本求KL，之后用mask做样本级筛选
-                    kl_s_t = F.kl_div(log_p_s, p_t, reduction="none").sum(dim=1)
-                    kl_t_s = F.kl_div(log_p_t, p_s, reduction="none").sum(dim=1)
-
-                    kl_s_t = (kl_s_t * mask).sum() / mask.sum()
-                    kl_t_s = (kl_t_s * mask).sum() / mask.sum()
+                    kl_s_t = F.kl_div(log_p_s, p_t, reduction="none").sum(dim=1).mean()
+                    kl_t_s = F.kl_div(log_p_t, p_s, reduction="none").sum(dim=1).mean()
 
                     # 特征MSE对齐：在整个batch上计算，不受distill_ratio控制
                     mse_feat = F.mse_loss(rep, W_h(rep_g))
@@ -140,10 +183,8 @@ class clientKD(Client):
                     log_ps_part2 = F.log_softmax(logits_s_part2, dim=1)
                     nckd_per_s = F.kl_div(log_ps_part2, pt_part2, reduction="none").sum(dim=1) * (T * T)
 
-                    # 样本级 mask 加权（支持 distill_ratio）
-                    weight = mask / mask.sum()
-                    tckd_loss_s = (tckd_per_s * weight).sum()
-                    nckd_loss_s = (nckd_per_s * weight).sum()
+                    tckd_loss_s = tckd_per_s.mean()
+                    nckd_loss_s = nckd_per_s.mean()
                     dkd_raw_s = alpha * tckd_loss_s + beta * nckd_loss_s
 
                     # teacher -> student DKD（互蒸馏）
@@ -167,8 +208,8 @@ class clientKD(Client):
                     log_ps_part2_rev = F.log_softmax(logits_s_part2_rev, dim=1)
                     nckd_per_g = F.kl_div(log_ps_part2_rev, pt_part2_rev, reduction="none").sum(dim=1) * (T * T)
 
-                    tckd_loss_g = (tckd_per_g * weight).sum()
-                    nckd_loss_g = (nckd_per_g * weight).sum()
+                    tckd_loss_g = tckd_per_g.mean()
+                    nckd_loss_g = nckd_per_g.mean()
                     dkd_raw_g = alpha * tckd_loss_g + beta * nckd_loss_g
 
                     # 特征 MSE 对齐：在整个 batch 上计算
@@ -222,6 +263,17 @@ class clientKD(Client):
 
     def train_metrics(self):
         trainloader = self.load_train_data()
+        if self.distill_ratio < 1.0:
+            dataset = trainloader.dataset
+            total_num = len(dataset)
+            selected_num = max(1, int(self.distill_ratio * total_num))
+            selected_idx = torch.randperm(total_num)[:selected_num].tolist()
+            trainloader = torch.utils.data.DataLoader(
+                torch.utils.data.Subset(dataset, selected_idx),
+                batch_size=trainloader.batch_size,
+                drop_last=trainloader.drop_last,
+                shuffle=False,
+            )
         model = load_item(self.role, 'model', self.save_folder_name)
         global_model = load_item(self.role, 'global_model', self.save_folder_name)
         W_h = load_item(self.role, 'W_h', self.save_folder_name)
@@ -246,23 +298,13 @@ class clientKD(Client):
                 CE_loss = self.loss(output, y)       # 学生的监督损失
                 CE_loss_g = self.loss(output_g, y)   # 教师的监督损失
 
-                # 评估时也按照训练时的蒸馏设置构造loss，方便对比
-                if self.distill_ratio >= 1.0:
-                    mask = torch.ones_like(y, dtype=torch.float32, device=self.device)
-                else:
-                    mask = (torch.rand_like(y, dtype=torch.float32, device=self.device) < self.distill_ratio).float()
-                if mask.sum() < 1:
-                    rand_idx = torch.randint(0, y.shape[0], (1,), device=self.device)
-                    mask[rand_idx] = 1.0
-
                 distill_loss = torch.tensor(0.0, device=self.device)
 
                 if self.distill_type == "KD":
                     T = self.distill_T
                     log_p_s = F.log_softmax(output / T, dim=1)
                     p_t = F.softmax(output_g / T, dim=1)
-                    kl_s_t = F.kl_div(log_p_s, p_t, reduction="none").sum(dim=1)
-                    kl_s_t = (kl_s_t * mask).sum() / mask.sum()
+                    kl_s_t = F.kl_div(log_p_s, p_t, reduction="none").sum(dim=1).mean()
 
                     mse_feat = F.mse_loss(rep, W_h(rep_g))
 
@@ -301,9 +343,8 @@ class clientKD(Client):
                     log_ps_part2 = F.log_softmax(logits_s_part2, dim=1)
                     nckd_per = F.kl_div(log_ps_part2, pt_part2, reduction="none").sum(dim=1) * (T * T)
 
-                    weight = mask / mask.sum()
-                    tckd_loss = (tckd_per * weight).sum()
-                    nckd_loss = (nckd_per * weight).sum()
+                    tckd_loss = tckd_per.mean()
+                    nckd_loss = nckd_per.mean()
 
                     dkd_raw = alpha * tckd_loss + beta * nckd_loss
 
