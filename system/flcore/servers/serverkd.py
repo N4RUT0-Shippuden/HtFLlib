@@ -2,8 +2,9 @@ import copy
 import random
 import time
 
+import torch
 import numpy as np
-from flcore.clients.clientkd import clientKD, recover, decomposition
+from flcore.clients.clientkd import clientKD
 from flcore.servers.serverbase import Server
 from flcore.clients.clientbase import load_item, save_item
 from threading import Thread
@@ -29,9 +30,6 @@ class FedKD(Server):
 
         # self.load_model()
         self.Budget = []
-        self.T_start = args.T_start
-        self.T_end = args.T_end
-        self.energy = self.T_start
 
 
     def train(self):
@@ -64,10 +62,6 @@ class FedKD(Server):
             if self.auto_break and self.check_done(acc_lss=[self.rs_test_acc], top_cnt=self.top_cnt):
                 break
 
-            self.energy = self.T_start + ((1 + i) / self.global_rounds) * (self.T_end - self.T_start)
-            for client in self.clients:
-                client.energy = self.energy
-
         print("\nBest accuracy.")
         # self.print_(max(self.rs_test_acc), max(
         #     self.rs_train_acc), min(self.rs_train_loss))
@@ -82,17 +76,23 @@ class FedKD(Server):
         assert (len(self.uploaded_ids) > 0)
 
         global_model = load_item(self.role, 'global_model', self.save_folder_name)
-        global_param = {name: param.detach().cpu().numpy() 
-                        for name, param in global_model.named_parameters()}
-        for k in global_param.keys():
-            global_param[k] = np.zeros_like(global_param[k])
+        global_param = {
+            name: np.zeros_like(param.detach().cpu().numpy())
+            for name, param in global_model.named_parameters()
+        }
             
         for cid in self.uploaded_ids:
             client = self.clients[cid]
-            compressed_param = load_item(client.role, 'compressed_param', client.save_folder_name)
-            client_param = recover(compressed_param)
+            client_global_model = load_item(client.role, 'global_model', client.save_folder_name)
+            client_param = {
+                name: param.detach().cpu().numpy()
+                for name, param in client_global_model.named_parameters()
+            }
             for server_k, client_k in zip(global_param.keys(), client_param.keys()):
                 global_param[server_k] += client_param[client_k] * 1/len(self.uploaded_ids)
+        
+        for name, param in global_model.named_parameters():
+            if name in global_param:
+                param.data = torch.tensor(global_param[name], device=self.device).data.clone()
 
-        compressed_param = decomposition(global_param.items(), self.energy)
-        save_item(compressed_param, self.role, 'compressed_param', self.save_folder_name)
+        save_item(global_model, self.role, 'global_model', self.save_folder_name)

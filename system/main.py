@@ -387,8 +387,6 @@ if __name__ == "__main__":
     parser.add_argument('-bt', "--beta", type=float, default=1.0)
     # FedKD
     parser.add_argument('-mlr', "--mentee_learning_rate", type=float, default=0.01)  # 全局/mentee模型在客户端的学习率
-    parser.add_argument('-Ts', "--T_start", type=float, default=0.95)  # SVD压缩的初始能量阈值
-    parser.add_argument('-Te', "--T_end", type=float, default=0.98)    # SVD压缩的最终能量阈值
     parser.add_argument('--distill_ratio', type=float, default=1.0,    # 每个客户端本地用于KD/DKD蒸馏的样本比例
                         help="Ratio of local samples used for KD/DKD distillation in FedKD")
     parser.add_argument('--distill_type', type=str, default='DKD',      # 蒸馏类型：KD或DKD
