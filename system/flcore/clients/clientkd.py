@@ -92,9 +92,8 @@ class clientKD(Client):
                     kl_s_t = F.kl_div(log_p_s, p_t, reduction="batchmean")
                     kl_t_s = F.kl_div(log_p_t, p_s, reduction="batchmean")
 
-                    denom = (CE_loss + CE_loss_g)
-                    L_d = kl_s_t / denom
-                    L_d_g = kl_t_s / denom
+                    L_d = kl_s_t
+                    L_d_g = kl_t_s
 
                     distill_loss = L_d
                     distill_loss_g = L_d_g
@@ -143,9 +142,8 @@ class clientKD(Client):
                     dkd_non = dkd_non.mean()
                     dkd_non_g = dkd_non_g.mean()
 
-                    denom = (CE_loss + CE_loss_g)
-                    L_d = (alpha * dkd_target + beta * dkd_non) / denom
-                    L_d_g = (alpha * dkd_target_g + beta * dkd_non_g) / denom
+                    L_d = (alpha * dkd_target + beta * dkd_non)
+                    L_d_g = (alpha * dkd_target_g + beta * dkd_non_g)
 
                     distill_loss = dkd_coeff * L_d
                     distill_loss_g = dkd_coeff * L_d_g
@@ -227,8 +225,7 @@ class clientKD(Client):
                     p_t = F.softmax(output_g / T, dim=1)
                     kl_s_t = F.kl_div(log_p_s, p_t, reduction="batchmean")
 
-                    denom = (CE_loss + CE_loss_g)
-                    L_d = kl_s_t / denom
+                    L_d = kl_s_t
 
                     distill_loss = L_d
 
@@ -262,8 +259,7 @@ class clientKD(Client):
                     dkd_target = dkd_target.mean()
                     dkd_non = dkd_non.mean()
 
-                    denom = (CE_loss + CE_loss_g)
-                    L_d = (alpha * dkd_target + beta * dkd_non) / denom
+                    L_d = (alpha * dkd_target + beta * dkd_non)
 
                     distill_loss = dkd_coeff * L_d
 
