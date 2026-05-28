@@ -400,6 +400,8 @@ if __name__ == "__main__":
                         help="Weight for non-target-class term in DKD loss")
     parser.add_argument('--distill_T', type=float, default=1.0,        # KD/DKD中的温度系数
                         help="Temperature for KD/DKD logits distillation in FedKD")
+    parser.add_argument('--warmup_rounds', type=int, default=20,       # DKD蒸馏项线性warmup轮数
+                        help="Linear warmup rounds for DKD distillation loss in FedKD (CE unchanged)")
     # FedGH
     parser.add_argument('-slr', "--server_learning_rate", type=float, default=0.01)
     # FedTGP
