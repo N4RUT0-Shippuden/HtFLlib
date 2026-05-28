@@ -18,7 +18,7 @@ class clientKD(Client):
         self.distill_type = getattr(args, "distill_type", "KD")   # 蒸馏类型：KD或DKD
         self.dkd_alpha = getattr(args, "dkd_alpha", 1.0)          # DKD中target部分权重
         self.dkd_beta = getattr(args, "dkd_beta", 1.0)           # DKD中non-target部分权重
-        self.distill_T = getattr(args, "distill_T", 1.0)         # KD/DKD中logits的温度系数
+        self.distill_T = getattr(args, "distill_T", 4.0)         # KD/DKD中logits的温度系数
         self.warmup_rounds = getattr(args, "warmup_rounds", 20)  # DKD蒸馏项线性warmup轮数
         self.global_round_idx = 0
 

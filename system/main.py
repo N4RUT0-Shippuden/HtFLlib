@@ -391,14 +391,14 @@ if __name__ == "__main__":
     parser.add_argument('-Te', "--T_end", type=float, default=0.98)    # SVD压缩的最终能量阈值
     parser.add_argument('--distill_ratio', type=float, default=1.0,    # 每个客户端本地用于KD/DKD蒸馏的样本比例
                         help="Ratio of local samples used for KD/DKD distillation in FedKD")
-    parser.add_argument('--distill_type', type=str, default='KD',      # 蒸馏类型：KD或DKD
+    parser.add_argument('--distill_type', type=str, default='DKD',      # 蒸馏类型：KD或DKD
                         choices=['KD', 'DKD'],
                         help="Type of distillation used in FedKD: KD or DKD")
     parser.add_argument('--dkd_alpha', type=float, default=1.0,        # DKD中target部分的权重
                         help="Weight for target-class term in DKD loss")
     parser.add_argument('--dkd_beta', type=float, default=1.0,         # DKD中non-target部分的权重
                         help="Weight for non-target-class term in DKD loss")
-    parser.add_argument('--distill_T', type=float, default=1.0,        # KD/DKD中的温度系数
+    parser.add_argument('--distill_T', type=float, default=4.0,        # KD/DKD中的温度系数
                         help="Temperature for KD/DKD logits distillation in FedKD")
     parser.add_argument('--warmup_rounds', type=int, default=20,       # DKD蒸馏项线性warmup轮数
                         help="Linear warmup rounds for DKD distillation loss in FedKD (CE unchanged)")
