@@ -22,13 +22,8 @@ class clientKD(Client):
         self.global_round_idx = 0
 
         if args.save_folder_name == 'temp' or 'temp' not in args.save_folder_name:
-            W_h = nn.Linear(args.feature_dim, args.feature_dim, bias=False).to(self.device)
-            save_item(W_h, self.role, 'W_h', self.save_folder_name)
             global_model = load_item('Server', 'global_model', self.save_folder_name)
             save_item(global_model, self.role, 'global_model', self.save_folder_name)
-
-        self.KL = nn.KLDivLoss()
-        self.MSE = nn.MSELoss()
 
     def _compute_dkd_coeff(self, global_round):
         r = max(1, int(global_round))
@@ -52,10 +47,8 @@ class clientKD(Client):
             )
         model = load_item(self.role, 'model', self.save_folder_name)
         global_model = load_item(self.role, 'global_model', self.save_folder_name)
-        W_h = load_item(self.role, 'W_h', self.save_folder_name)
         optimizer = torch.optim.SGD(model.parameters(), lr=self.learning_rate)
         optimizer_g = torch.optim.SGD(global_model.parameters(), lr=self.mentee_learning_rate)
-        optimizer_W = torch.optim.SGD(W_h.parameters(), lr=self.learning_rate)
         # model.to(self.device)
         model.train()
         global_model.train()
@@ -87,7 +80,7 @@ class clientKD(Client):
                 distill_loss = torch.tensor(0.0, device=self.device)
                 distill_loss_g = torch.tensor(0.0, device=self.device)
 
-                # KD 和 DKD 都在logits层面做蒸馏，并在特征层面做MSE对齐
+                # KD 和 DKD 都在logits层面做蒸馏（不做特征对齐）
                 if self.distill_type == "KD":
                     # 标准KD：对logits做KL散度蒸馏
                     T = self.distill_T
@@ -99,16 +92,12 @@ class clientKD(Client):
                     kl_s_t = F.kl_div(log_p_s, p_t, reduction="batchmean")
                     kl_t_s = F.kl_div(log_p_t, p_s, reduction="batchmean")
 
-                    mse_feat = F.mse_loss(rep, W_h(rep_g), reduction="none").mean(dim=1).mean()
-
                     denom = (CE_loss + CE_loss_g)
                     L_d = kl_s_t / denom
                     L_d_g = kl_t_s / denom
-                    L_h = mse_feat / denom
-                    L_h_g = mse_feat / denom
 
-                    distill_loss = L_d + L_h
-                    distill_loss_g = L_d_g + L_h_g
+                    distill_loss = L_d
+                    distill_loss_g = L_d_g
 
                 elif self.distill_type == "DKD":
                     # DKD：将logits分解为target和non-target两部分分别蒸馏
@@ -154,16 +143,12 @@ class clientKD(Client):
                     dkd_non = dkd_non.mean()
                     dkd_non_g = dkd_non_g.mean()
 
-                    mse_feat = F.mse_loss(rep, W_h(rep_g), reduction="none").mean(dim=1).mean()
-
                     denom = (CE_loss + CE_loss_g)
                     L_d = (alpha * dkd_target + beta * dkd_non) / denom
                     L_d_g = (alpha * dkd_target_g + beta * dkd_non_g) / denom
-                    L_h = mse_feat / denom
-                    L_h_g = mse_feat / denom
 
-                    distill_loss = dkd_coeff * (L_d + L_h)
-                    distill_loss_g = dkd_coeff * (L_d_g + L_h_g)
+                    distill_loss = dkd_coeff * L_d
+                    distill_loss_g = dkd_coeff * L_d_g
 
                 else:
                     # 未知类型时退化为无蒸馏，仅使用CE损失
@@ -175,20 +160,16 @@ class clientKD(Client):
 
                 optimizer.zero_grad()
                 optimizer_g.zero_grad()
-                optimizer_W.zero_grad()
                 loss.backward(retain_graph=True)
                 loss_g.backward()
                 # prevent divergency on specifical tasks
                 torch.nn.utils.clip_grad_norm_(model.parameters(), 10)
                 torch.nn.utils.clip_grad_norm_(global_model.parameters(), 10)
-                torch.nn.utils.clip_grad_norm_(W_h.parameters(), 10)
                 optimizer.step()
                 optimizer_g.step()
-                optimizer_W.step()
 
         save_item(model, self.role, 'model', self.save_folder_name)
         save_item(global_model, self.role, 'global_model', self.save_folder_name)
-        save_item(W_h, self.role, 'W_h', self.save_folder_name)
 
         self.train_time_cost['num_rounds'] += 1
         self.train_time_cost['total_cost'] += time.time() - start_time
@@ -216,7 +197,6 @@ class clientKD(Client):
             )
         model = load_item(self.role, 'model', self.save_folder_name)
         global_model = load_item(self.role, 'global_model', self.save_folder_name)
-        W_h = load_item(self.role, 'W_h', self.save_folder_name)
         # model.to(self.device)
         model.eval()
         global_model.eval()
@@ -247,13 +227,10 @@ class clientKD(Client):
                     p_t = F.softmax(output_g / T, dim=1)
                     kl_s_t = F.kl_div(log_p_s, p_t, reduction="batchmean")
 
-                    mse_feat = F.mse_loss(rep, W_h(rep_g), reduction="none").mean(dim=1).mean()
-
                     denom = (CE_loss + CE_loss_g)
                     L_d = kl_s_t / denom
-                    L_h = mse_feat / denom
 
-                    distill_loss = L_d + L_h
+                    distill_loss = L_d
 
                 elif self.distill_type == "DKD":
                     T = self.distill_T
@@ -285,13 +262,10 @@ class clientKD(Client):
                     dkd_target = dkd_target.mean()
                     dkd_non = dkd_non.mean()
 
-                    mse_feat = F.mse_loss(rep, W_h(rep_g), reduction="none").mean(dim=1).mean()
-
                     denom = (CE_loss + CE_loss_g)
                     L_d = (alpha * dkd_target + beta * dkd_non) / denom
-                    L_h = mse_feat / denom
 
-                    distill_loss = dkd_coeff * (L_d + L_h)
+                    distill_loss = dkd_coeff * L_d
 
                 loss = CE_loss + distill_loss
                 train_num += y.shape[0]
