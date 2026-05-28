@@ -154,7 +154,8 @@ class Server(object):
 
             with h5py.File(file_path, 'w') as hf:
                 hf.create_dataset('rs_test_acc', data=self.rs_test_acc)
-                hf.create_dataset('rs_test_auc', data=self.rs_test_auc)
+                if len(self.rs_test_auc) > 0:
+                    hf.create_dataset('rs_test_auc', data=self.rs_test_auc)
                 hf.create_dataset('rs_train_loss', data=self.rs_train_loss)
         
         if 'temp' in self.save_folder_name:
@@ -171,8 +172,11 @@ class Server(object):
         for c in self.clients:
             ct, ns, auc = c.test_metrics()
             tot_correct.append(ct*1.0)
-            print(f'Client {c.id}: Acc: {ct*1.0/ns}, AUC: {auc}')
-            tot_auc.append(auc*ns)
+            if auc is None:
+                print(f'Client {c.id}: Acc: {ct*1.0/ns}')
+            else:
+                print(f'Client {c.id}: Acc: {ct*1.0/ns}, AUC: {auc}')
+                tot_auc.append(auc*ns)
             num_samples.append(ns)
 
         ids = [c.id for c in self.clients]
@@ -198,10 +202,11 @@ class Server(object):
         # stats_train = self.train_metrics()
 
         test_acc = sum(stats[2])*1.0 / sum(stats[1])
-        test_auc = sum(stats[3])*1.0 / sum(stats[1])
+        has_auc = len(stats[3]) > 0
+        test_auc = (sum(stats[3])*1.0 / sum(stats[1])) if has_auc else None
         # train_loss = sum(stats_train[2])*1.0 / sum(stats_train[1])
         accs = [a / n for a, n in zip(stats[2], stats[1])]
-        aucs = [a / n for a, n in zip(stats[3], stats[1])]
+        aucs = [a / n for a, n in zip(stats[3], stats[1])] if has_auc else None
         
         if acc == None:
             self.rs_test_acc.append(test_acc)
@@ -215,10 +220,13 @@ class Server(object):
 
         # print("Averaged Train Loss: {:.4f}".format(train_loss))
         print("Averaged Test Accuracy: {:.4f}".format(test_acc))
-        print("Averaged Test AUC: {:.4f}".format(test_auc))
+        if has_auc:
+            self.rs_test_auc.append(test_auc)
+            print("Averaged Test AUC: {:.4f}".format(test_auc))
         # self.print_(test_acc, train_acc, train_loss)
         print("Std Test Accuracy: {:.4f}".format(np.std(accs)))
-        print("Std Test AUC: {:.4f}".format(np.std(aucs)))
+        if has_auc:
+            print("Std Test AUC: {:.4f}".format(np.std(aucs)))
 
     def print_(self, test_acc, test_auc, train_loss):
         print("Average Test Accuracy: {:.4f}".format(test_acc))

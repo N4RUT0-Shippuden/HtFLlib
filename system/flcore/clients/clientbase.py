@@ -78,8 +78,9 @@ class Client(object):
 
         test_acc = 0
         test_num = 0
-        y_prob = []
-        y_true = []
+        compute_auc = self.algorithm != "FedKD"
+        y_prob = [] if compute_auc else None
+        y_true = [] if compute_auc else None
         
         with torch.no_grad():
             for x, y in testloader:
@@ -93,14 +94,18 @@ class Client(object):
                 test_acc += (torch.sum(torch.argmax(output, dim=1) == y)).item()
                 test_num += y.shape[0]
 
-                y_prob.append(output.detach().cpu().numpy())
-                nc = self.num_classes
-                if self.num_classes == 2:
-                    nc += 1
-                lb = label_binarize(y.detach().cpu().numpy(), classes=np.arange(nc))
-                if self.num_classes == 2:
-                    lb = lb[:, :2]
-                y_true.append(lb)
+                if compute_auc:
+                    y_prob.append(output.detach().cpu().numpy())
+                    nc = self.num_classes
+                    if self.num_classes == 2:
+                        nc += 1
+                    lb = label_binarize(y.detach().cpu().numpy(), classes=np.arange(nc))
+                    if self.num_classes == 2:
+                        lb = lb[:, :2]
+                    y_true.append(lb)
+
+        if not compute_auc:
+            return test_acc, test_num, None
 
         y_prob = np.concatenate(y_prob, axis=0)
         y_true = np.concatenate(y_true, axis=0)
