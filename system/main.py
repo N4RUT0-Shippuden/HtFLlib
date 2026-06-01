@@ -394,11 +394,19 @@ if __name__ == "__main__":
     parser.add_argument('--distill_type', type=str, default='KD',      # 蒸馏类型：KD或DKD
                         choices=['KD', 'DKD'],
                         help="Type of distillation used in FedKD: KD or DKD")
-    parser.add_argument('--dkd_alpha', type=float, default=1.0,        # DKD中target部分的权重
-                        help="Weight for target-class term in DKD loss")
-    parser.add_argument('--dkd_beta', type=float, default=1.0,         # DKD中non-target部分的权重
-                        help="Weight for non-target-class term in DKD loss")
-    parser.add_argument('--distill_T', type=float, default=1.0,        # KD/DKD中的温度系数
+    parser.add_argument('--dkd_alpha', type=float, default=1.0,        # DKD TCKD权重（同 --tckd_weight）
+                        help="Weight for target-class (TCKD) term in DKD loss")
+    parser.add_argument('--dkd_beta', type=float, default=8.0,         # DKD NCKD权重（同 --nckd_weight）
+                        help="Weight for non-target-class (NCKD) term in DKD loss")
+    parser.add_argument('--tckd_weight', type=float, default=1.0,
+                        help="TCKD weight in DKD; <0 uses --dkd_alpha")
+    parser.add_argument('--nckd_weight', type=float, default=8.0,
+                        help="NCKD weight in DKD; <0 uses --dkd_beta")
+    parser.add_argument('--dkd_weight', type=float, default=1.0,
+                        help="Overall weight for DKD distillation loss")
+    parser.add_argument('--warmup_rounds', type=int, default=20,
+                        help="Linear warmup rounds for DKD distillation (CE unchanged)")
+    parser.add_argument('--distill_T', type=float, default=4.0,        # KD/DKD中的温度系数
                         help="Temperature for KD/DKD logits distillation in FedKD")
     # FedGH
     parser.add_argument('-slr', "--server_learning_rate", type=float, default=0.01)

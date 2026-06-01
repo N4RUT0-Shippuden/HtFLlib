@@ -7,6 +7,63 @@ import torch.nn.functional as F
 from flcore.clients.clientbase import Client, load_item, save_item
 
 
+def _get_gt_mask(logits, target):
+    target = target.reshape(-1)
+    mask = torch.zeros_like(logits).scatter_(1, target.unsqueeze(1), 1).bool()
+    return mask
+
+
+def _get_other_mask(logits, target):
+    target = target.reshape(-1)
+    mask = torch.ones_like(logits).scatter_(1, target.unsqueeze(1), 0).bool()
+    return mask
+
+
+def _cat_mask(t, mask1, mask2):
+    t1 = (t * mask1).sum(dim=1, keepdim=True)
+    t2 = (t * mask2).sum(dim=1, keepdim=True)
+    return torch.cat([t1, t2], dim=1)
+
+
+def _refine_as_not_true(logits, targets, num_classes):
+    nt_positions = torch.arange(0, num_classes, device=logits.device)
+    nt_positions = nt_positions.repeat(logits.size(0), 1)
+    nt_positions = nt_positions[nt_positions[:, :] != targets.view(-1, 1)]
+    nt_positions = nt_positions.view(-1, num_classes - 1)
+    return torch.gather(logits, 1, nt_positions)
+
+
+def dkd_loss_fn(student_logits, teacher_logits, targets, temperature, t_weight, n_weight):
+    """DKD loss aligned with federatedlearning/client/kd_dkd_client.py."""
+    batch_size = targets.shape[0]
+    gt_mask = _get_gt_mask(student_logits, targets)
+    other_mask = _get_other_mask(student_logits, targets)
+    pred_student = F.softmax(student_logits / temperature, dim=1)
+    pred_teacher = F.softmax(teacher_logits / temperature, dim=1)
+    pred_student = _cat_mask(pred_student, gt_mask, other_mask)
+    pred_teacher = _cat_mask(pred_teacher, gt_mask, other_mask)
+    log_pred_student = torch.log(pred_student)
+    loss_tckd = (
+        F.kl_div(log_pred_student, pred_teacher, reduction="sum")
+        * (temperature**2)
+        / batch_size
+    )
+    teacher_other_logits = _refine_as_not_true(
+        teacher_logits, targets, teacher_logits.size(1),
+    )
+    student_other_logits = _refine_as_not_true(
+        student_logits, targets, student_logits.size(1),
+    )
+    pred_teacher_part2 = F.softmax(teacher_other_logits / temperature, dim=1)
+    log_pred_student_part2 = F.log_softmax(student_other_logits / temperature, dim=1)
+    loss_nckd = (
+        F.kl_div(log_pred_student_part2, pred_teacher_part2, reduction="sum")
+        * (temperature**2)
+        / batch_size
+    )
+    return t_weight * loss_tckd + n_weight * loss_nckd
+
+
 class clientKD(Client):
     def __init__(self, args, id, train_samples, test_samples, **kwargs):
         super().__init__(args, id, train_samples, test_samples, **kwargs)
@@ -16,9 +73,14 @@ class clientKD(Client):
         self.energy = args.T_start
         self.distill_ratio = getattr(args, "distill_ratio", 1.0)  # 每个客户端本地用于KD/DKD的样本比例
         self.distill_type = getattr(args, "distill_type", "KD")   # 蒸馏类型：KD或DKD
-        self.dkd_alpha = getattr(args, "dkd_alpha", 1.0)          # DKD中target部分权重
-        self.dkd_beta = getattr(args, "dkd_beta", 1.0)           # DKD中non-target部分权重
-        self.distill_T = getattr(args, "distill_T", 1.0)         # KD/DKD中logits的温度系数
+        _tckd = getattr(args, "tckd_weight", -1.0)
+        _nckd = getattr(args, "nckd_weight", -1.0)
+        self.tckd_weight = args.dkd_alpha if _tckd < 0 else _tckd
+        self.nckd_weight = args.dkd_beta if _nckd < 0 else _nckd
+        self.dkd_weight = getattr(args, "dkd_weight", 1.0)
+        self.distill_T = getattr(args, "distill_T", 4.0)
+        self.warmup_rounds = getattr(args, "warmup_rounds", 20)
+        self.global_round_idx = 0
 
         if args.save_folder_name == 'temp' or 'temp' not in args.save_folder_name:
             W_h = nn.Linear(args.feature_dim, args.feature_dim, bias=False).to(self.device)
@@ -29,6 +91,11 @@ class clientKD(Client):
         self.KL = nn.KLDivLoss()
         self.MSE = nn.MSELoss()
 
+    def _compute_dkd_coeff(self, global_round):
+        r = max(1, int(global_round))
+        if self.warmup_rounds <= 0:
+            return 1.0
+        return float(min(r, self.warmup_rounds)) / float(self.warmup_rounds)
 
     def train(self):
         trainloader = self.load_train_data()
@@ -111,63 +178,16 @@ class clientKD(Client):
                     distill_loss_g = L_d_g + L_h_g
 
                 elif self.distill_type == "DKD":
-                    # DKD：将logits分解为target和non-target两部分分别蒸馏
                     T = self.distill_T
-                    alpha = self.dkd_alpha
-                    beta = self.dkd_beta
-
-                    # 教师和学生的softmax概率
-                    p_s = F.softmax(output / T, dim=1)
-                    p_t = F.softmax(output_g / T, dim=1)
-
-                    # one-hot标签，用于取出target类
-                    one_hot = F.one_hot(y, num_classes=output.size(1)).float()
-
-                    # target部分概率
-                    p_s_t = (p_s * one_hot).sum(dim=1, keepdim=True)
-                    p_t_t = (p_t * one_hot).sum(dim=1, keepdim=True)
-
-                    # non-target部分概率
-                    p_s_nt = p_s * (1.0 - one_hot)
-                    p_t_nt = p_t * (1.0 - one_hot)
-
-                    # 对non-target部分重新归一化
-                    p_s_nt_sum = p_s_nt.sum(dim=1, keepdim=True) + 1e-8
-                    p_t_nt_sum = p_t_nt.sum(dim=1, keepdim=True) + 1e-8
-                    p_s_nt_norm = p_s_nt / p_s_nt_sum
-                    p_t_nt_norm = p_t_nt / p_t_nt_sum
-
-                    # target部分的DKD项（KL散度）
-                    log_p_s_t = torch.log(p_s_t + 1e-8)
-                    log_p_t_t = torch.log(p_t_t + 1e-8)
-                    dkd_target = F.kl_div(log_p_s_t, p_t_t, reduction="none").view(-1)
-                    dkd_target_g = F.kl_div(log_p_t_t, p_s_t, reduction="none").view(-1)
-
-                    # non-target部分的DKD项（KL散度）
-                    log_p_s_nt = torch.log(p_s_nt_norm + 1e-8)
-                    log_p_t_nt = torch.log(p_t_nt_norm + 1e-8)
-                    dkd_non = F.kl_div(log_p_s_nt, p_t_nt_norm, reduction="none").sum(dim=1)
-                    dkd_non_g = F.kl_div(log_p_t_nt, p_s_nt_norm, reduction="none").sum(dim=1)
-
-                    # 应用样本级mask
-                    dkd_target = (dkd_target * mask).sum() / mask.sum()
-                    dkd_target_g = (dkd_target_g * mask).sum() / mask.sum()
-                    dkd_non = (dkd_non * mask).sum() / mask.sum()
-                    dkd_non_g = (dkd_non_g * mask).sum() / mask.sum()
-
-                    # 特征MSE对齐，同样只在被选为蒸馏的样本上约束
-                    mse_feat = F.mse_loss(rep, W_h(rep_g), reduction="none").mean(dim=1)
-                    mse_feat = (mse_feat * mask).sum() / mask.sum()
-
-                    # DKD情况下，同样拆成 L_d（由target和non-target两部分组成）和 L_h
-                    denom = (CE_loss + CE_loss_g)
-                    L_d = (alpha * dkd_target + beta * dkd_non) / denom
-                    L_d_g = (alpha * dkd_target_g + beta * dkd_non_g) / denom
-                    L_h = mse_feat / denom
-                    L_h_g = mse_feat / denom
-
-                    distill_loss = L_d + L_h
-                    distill_loss_g = L_d_g + L_h_g
+                    student_dkd = dkd_loss_fn(
+                        output, output_g, y, T, self.tckd_weight, self.nckd_weight,
+                    )
+                    teacher_dkd = dkd_loss_fn(
+                        output_g, output, y, T, self.tckd_weight, self.nckd_weight,
+                    )
+                    dkd_coeff = self._compute_dkd_coeff(self.global_round_idx)
+                    distill_loss = self.dkd_weight * dkd_coeff * student_dkd
+                    distill_loss_g = self.dkd_weight * dkd_coeff * teacher_dkd
 
                 else:
                     # 未知类型时退化为无蒸馏，仅使用CE损失
@@ -264,42 +284,11 @@ class clientKD(Client):
 
                 elif self.distill_type == "DKD":
                     T = self.distill_T
-                    alpha = self.dkd_alpha
-                    beta = self.dkd_beta
-
-                    p_s = F.softmax(output / T, dim=1)
-                    p_t = F.softmax(output_g / T, dim=1)
-                    one_hot = F.one_hot(y, num_classes=output.size(1)).float()
-
-                    p_s_t = (p_s * one_hot).sum(dim=1, keepdim=True)
-                    p_t_t = (p_t * one_hot).sum(dim=1, keepdim=True)
-
-                    p_s_nt = p_s * (1.0 - one_hot)
-                    p_t_nt = p_t * (1.0 - one_hot)
-
-                    p_s_nt_sum = p_s_nt.sum(dim=1, keepdim=True) + 1e-8
-                    p_t_nt_sum = p_t_nt.sum(dim=1, keepdim=True) + 1e-8
-                    p_s_nt_norm = p_s_nt / p_s_nt_sum
-                    p_t_nt_norm = p_t_nt / p_t_nt_sum
-
-                    log_p_s_t = torch.log(p_s_t + 1e-8)
-                    log_p_t_t = torch.log(p_t_t + 1e-8)
-                    dkd_target = F.kl_div(log_p_s_t, p_t_t, reduction="none").view(-1)
-
-                    log_p_s_nt = torch.log(p_s_nt_norm + 1e-8)
-                    dkd_non = F.kl_div(log_p_s_nt, p_t_nt_norm, reduction="none").sum(dim=1)
-
-                    dkd_target = (dkd_target * mask).sum() / mask.sum()
-                    dkd_non = (dkd_non * mask).sum() / mask.sum()
-
-                    mse_feat = F.mse_loss(rep, W_h(rep_g), reduction="none").mean(dim=1)
-                    mse_feat = (mse_feat * mask).sum() / mask.sum()
-
-                    denom = (CE_loss + CE_loss_g)
-                    L_d = (alpha * dkd_target + beta * dkd_non) / denom
-                    L_h = mse_feat / denom
-
-                    distill_loss = L_d + L_h
+                    student_dkd = dkd_loss_fn(
+                        output, output_g, y, T, self.tckd_weight, self.nckd_weight,
+                    )
+                    dkd_coeff = self._compute_dkd_coeff(self.global_round_idx)
+                    distill_loss = self.dkd_weight * dkd_coeff * student_dkd
 
                 loss = CE_loss + distill_loss
                 train_num += y.shape[0]
